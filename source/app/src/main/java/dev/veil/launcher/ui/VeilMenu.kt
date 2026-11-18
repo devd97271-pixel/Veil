@@ -122,7 +122,8 @@ fun VeilMenuAnchor(state: LauncherState) {
         Box(Modifier.floatingBelow(40.dp)) {
             // Kept built while on Home (it was rebuilt from scratch on every open, which stuttered); while
             // closed it isn't placed on screen, so the remote can never move focus into it.
-            KeptPanel(open = state.veilMenuOpen) { VeilPanel(state) }
+           KeptPanel(open = state.veilMenuOpen) { VeilPanel(state) }
+           if (ShortcutsUi.open) ShortcutsDialog(state)
         }
     }
 }
@@ -161,12 +162,13 @@ private fun VeilPanel(state: LauncherState) {
     val current = ThemeState.current
     val vizButton = remember { FocusRequester() }
     val weatherButton = remember { FocusRequester() }
+        val shortcutsButton = remember { FocusRequester() }
     // The panel stays built between opens; start each open scrolled to the top, as before.
     val scroll = rememberScrollState()
     LaunchedEffect(state.veilMenuOpen) { if (!state.veilMenuOpen) scroll.scrollTo(0) }
     // After a window opened from this menu closes, put focus back on the button that opened it.
     LaunchedEffect(state.menuReturn) {
-        val target = when (state.menuReturn) { "viz" -> vizButton; "weather" -> weatherButton; else -> null }
+                val target = when (state.menuReturn) { "viz" -> vizButton; "weather" -> weatherButton; "shortcuts" -> shortcutsButton; else -> null }
         if (target != null) {
             delay(80)
             runCatching { target.requestFocus() }
@@ -285,7 +287,17 @@ private fun VeilPanel(state: LauncherState) {
                 onClick = state::toggleSeasonal,
             )
         }
-
+        // Shortcuts
+        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            SectionLabel("SHORTCUTS")
+            MenuButton(
+                icon = VeilIcons.Sparkle,
+                title = "Start app & button shortcuts",
+                subtitle = "Open an app on startup or with a remote button",
+                modifier = Modifier.focusRequester(shortcutsButton),
+                onClick = { ShortcutsUi.open = true },
+            )
+        }
         Text("Back to close", fontSize = 8.5.sp, color = Veil.Text.copy(alpha = 0.45f))
     }
 }
