@@ -12,6 +12,7 @@ import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.repeatOnLifecycle
+import dev.veil.launcher.ui.ShortcutsUi
 import dev.veil.launcher.ui.ThemeState
 import dev.veil.launcher.ui.VeilApp
 import dev.veil.launcher.ui.VeilTheme
@@ -37,8 +38,17 @@ class MainActivity : ComponentActivity() {
                 androidx.compose.foundation.layout.Box(androidx.compose.ui.Modifier.clearAndSetSemantics { }) { VeilApp(state) }
             }
         }
-        // Fresh start right after the TV boots: play the intro.
-        if (android.os.SystemClock.elapsedRealtime() < 10 * 60_000L) state.playIntro()
+        // Fresh start right after the TV boots: play the intro, and open the chosen start app (once per boot).
+        val firstRunThisBoot = Shortcuts.isFirstRunThisBoot(this)
+        if (android.os.SystemClock.elapsedRealtime() < 10 * 60_000L) {
+            state.playIntro()
+            if (firstRunThisBoot) {
+                lifecycleScope.launch {
+                    delay(800)
+                    launchStartApp()
+                }
+            }
+        }
         registerReceiver(screenReceiver, IntentFilter().apply {
             addAction(Intent.ACTION_SCREEN_OFF); addAction(Intent.ACTION_SCREEN_ON)
         })
@@ -67,7 +77,14 @@ class MainActivity : ComponentActivity() {
         override fun onReceive(c: Context, i: Intent) {
             when (i.action) {
                 Intent.ACTION_SCREEN_OFF -> state.onScreenOff()
-                Intent.ACTION_SCREEN_ON -> state.onScreenOn(lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED))
+                Intent.ACTION_SCREEN_ON -> {
+                    state.onScreenOn(lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED))
+                    // TV woke up and Veil is what's showing: open the chosen start app.
+                    lifecycleScope.launch {
+                        delay(1_500)
+                        if (lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED)) launchStartApp()
+                    }
+                }
             }
         }
     }
@@ -77,7 +94,50 @@ class MainActivity : ComponentActivity() {
         super.onDestroy()
     }
 
+    /** Opens an installed app by package name. Returns false if it can't be opened. */
+    private fun launchPackage(pkg: String): Boolean {
+        val intent = state.apps.firstOrNull { it.pkg == pkg }?.launch
+            ?: packageManager.getLeanbackLaunchIntentForPackage(pkg)
+            ?: packageManager.getLaunchIntentForPackage(pkg)
+            ?: return false
+        return try {
+            startActivity(intent)
+            true
+        } catch (e: Exception) {
+            false
+        }
+    }
+
+    private fun launchStartApp() {
+        val pkg = Shortcuts.startApp(this) ?: return
+        launchPackage(pkg)
+    }
+
+    /** Button shortcuts work only on the plain Home screen, never while a menu or text field is open. */
+    private fun shortcutsAllowed(): Boolean =
+        state.screen == Screen.HOME &&
+            state.sheet == null && state.watchSheet == null &&
+            !state.privacySheet && !state.musicSheet && !state.weatherPicker &&
+            !state.vizSettingsOpen && !state.veilMenuOpen && !ShortcutsUi.open &&
+            !state.ambient && state.intro == LauncherState.Intro.NONE
+
+    private var shortcutKeyDown = -1
+
+    private fun handleShortcut(event: KeyEvent): Boolean {
+        if (event.action == KeyEvent.ACTION_UP && event.keyCode == shortcutKeyDown) {
+            shortcutKeyDown = -1
+            return true
+        }
+        if (event.action != KeyEvent.ACTION_DOWN || event.repeatCount != 0) return false
+        if (!shortcutsAllowed()) return false
+        val pkg = Shortcuts.keyApp(this, event.keyCode) ?: return false
+        if (!launchPackage(pkg)) return false
+        shortcutKeyDown = event.keyCode
+        return true
+    }
+
     override fun dispatchKeyEvent(event: KeyEvent): Boolean {
+        if (handleShortcut(event)) return true
         val down = event.action == KeyEvent.ACTION_DOWN
         if (event.action == KeyEvent.ACTION_DOWN || event.action == KeyEvent.ACTION_UP) {
             if (state.onKey(event.keyCode, down)) return true
